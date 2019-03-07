@@ -18,20 +18,21 @@ import fcn8s
 
 cudnn.benchmark = True
 
-ckpt_path = '../../ckpt'
+ckpt_path = 'ckpt'
 exp_name = 'voc-fcn8s'
 writer = SummaryWriter(os.path.join(ckpt_path, 'exp', exp_name))
 
 args = {
-    'epoch_num': 300,
+    'epoch_num': 3,
     'lr': 1e-10,
     'weight_decay': 1e-4,
     'momentum': 0.95,
     'lr_patience': 100,  # large patience denotes fixed lr
     'snapshot': '',  # empty string denotes learning from scratch
     'print_freq': 20,
-    'val_save_to_img_file': False,
-    'val_img_sample_rate': 0.1  # randomly sample some validation results to display
+    'val_save_to_img_file': True,
+    'val_img_sample_rate': 0.1,  # randomly sample some validation results to display
+    'max_images': 2
 }
 
 
@@ -64,7 +65,7 @@ def main(train_args):
         standard_transforms.ToPILImage(),
     ])
     visualize = standard_transforms.Compose([
-        standard_transforms.Scale(400),
+        standard_transforms.Resize(400),
         standard_transforms.CenterCrop(400),
         standard_transforms.ToTensor()
     ])
@@ -109,6 +110,9 @@ def train(train_loader, net, criterion, optimizer, epoch, train_args):
     curr_iter = (epoch - 1) * len(train_loader)
     last_cycle = time.time()
     for i, data in enumerate(train_loader):
+        print(i)
+        if i > train_args['max_images'] - 2:
+            break
         inputs, labels = data
         assert inputs.size()[2:] == labels.size()[1:]
         N = inputs.size(0)
@@ -144,11 +148,13 @@ def validate(val_loader, net, criterion, optimizer, epoch, train_args, restore, 
     inputs_all, gts_all, predictions_all = [], [], []
 
     for vi, data in enumerate(val_loader):
+        if vi > train_args['max_images'] - 2:
+            break
         inputs, gts = data
         N = inputs.size(0)
-        inputs = Variable(inputs, volatile=True)
-        gts = Variable(gts, volatile=True)
-
+        # inputs = Variable(inputs, volatile=True)
+        # gts = Variable(gts, volatile=True)
+        print(vi)
         outputs = net(inputs)
         predictions = outputs.data.max(1)[1].squeeze_(1).squeeze_(0).cpu().numpy()
 

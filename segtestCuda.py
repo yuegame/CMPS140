@@ -64,7 +64,7 @@ def main(train_args):
         standard_transforms.ToPILImage(),
     ])
     visualize = standard_transforms.Compose([
-        standard_transforms.Scale(400),
+        standard_transforms.Resize(400),
         standard_transforms.CenterCrop(400),
         standard_transforms.ToTensor()
     ])
@@ -73,6 +73,7 @@ def main(train_args):
     train_loader = DataLoader(train_set, batch_size=1, num_workers=4, shuffle=True)
     val_set = voc.VOC('val', transform=input_transform, target_transform=target_transform)
     val_loader = DataLoader(val_set, batch_size=1, num_workers=4, shuffle=False)
+    max_images = 1
 
     print('-----------------------------------------')
     print(os.path.abspath(train_set.imgs[0][0]))

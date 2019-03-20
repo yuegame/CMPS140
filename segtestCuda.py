@@ -18,37 +18,29 @@ import fcn8s
 
 cudnn.benchmark = True
 
-ckpt_path = '../../ckpt'
+ckpt_path = 'ckpt'
 exp_name = 'voc-fcn8s'
 writer = SummaryWriter(os.path.join(ckpt_path, 'exp', exp_name))
 
 args = {
-    'epoch_num': 300,
-    'lr': 1e-10,
-    'weight_decay': 1e-4,
+    'epoch_num': 10,
+    'lr': 1e-6,
+    'weight_decay': 1e-2,
     'momentum': 0.95,
-    'lr_patience': 100,  # large patience denotes fixed lr
-    'snapshot': '',  # empty string denotes learning from scratch
-    'print_freq': 20,
-    'val_save_to_img_file': False,
-    'val_img_sample_rate': 0.1  # randomly sample some validation results to display
+    'lr_patience': 100, 
+    'snapshot': '', 
+    'print_freq': 10,
+    'val_save_to_img_file': True,
+    'val_img_sample_rate': .2,  
+    'max_images': 8000
 }
 
 
 def main(train_args):
     net = fcn8s.FCN8s(num_classes=voc.num_classes).cuda()
 
-    if len(train_args['snapshot']) == 0:
-        curr_epoch = 1
-        train_args['best_record'] = {'epoch': 0, 'val_loss': 1e10, 'acc': 0, 'acc_cls': 0, 'mean_iu': 0, 'fwavacc': 0}
-    else:
-        print('training resumes from ' + train_args['snapshot'])
-        net.load_state_dict(torch.load(os.path.join(ckpt_path, exp_name, train_args['snapshot'])))
-        split_snapshot = train_args['snapshot'].split('_')
-        curr_epoch = int(split_snapshot[1]) + 1
-        train_args['best_record'] = {'epoch': int(split_snapshot[1]), 'val_loss': float(split_snapshot[3]),
-                                     'acc': float(split_snapshot[5]), 'acc_cls': float(split_snapshot[7]),
-                                     'mean_iu': float(split_snapshot[9]), 'fwavacc': float(split_snapshot[11])}
+    curr_epoch = 1
+    train_args['best_record'] = {'epoch': 0, 'val_loss': 1e10, 'acc': 0, 'acc_cls': 0, 'mean_iu': 0, 'fwavacc': 0}
 
     net.train()
 
@@ -70,15 +62,11 @@ def main(train_args):
     ])
 
     train_set = voc.VOC('train', transform=input_transform, target_transform=target_transform)
-    train_loader = DataLoader(train_set, batch_size=1, num_workers=4, shuffle=True)
+    train_loader = DataLoader(train_set, batch_size=1, num_workers=8, shuffle=True)
     val_set = voc.VOC('val', transform=input_transform, target_transform=target_transform)
-    val_loader = DataLoader(val_set, batch_size=1, num_workers=4, shuffle=False)
-    max_images = 1
+    val_loader = DataLoader(val_set, batch_size=1, num_workers=8, shuffle=False)
 
-    print('-----------------------------------------')
     print(os.path.abspath(train_set.imgs[0][0]))
-    input("Hit enter to continue...")
-    print('-----------------------------------------')
 
     criterion = CrossEntropyLoss2d(size_average=False, ignore_index=voc.ignore_label).cuda()
 
@@ -96,7 +84,7 @@ def main(train_args):
 
     check_mkdir(ckpt_path)
     check_mkdir(os.path.join(ckpt_path, exp_name))
-    open(os.path.join(ckpt_path, exp_name, str(datetime.datetime.now()) + '.txt'), 'w').write(str(train_args) + '\n\n')
+    # open(os.path.join(ckpt_path, exp_name, str(datetime.datetime.now()) + '.txt'), 'w').write(str(train_args) + '\n\n')
 
     scheduler = ReduceLROnPlateau(optimizer, 'min', patience=train_args['lr_patience'], min_lr=1e-10, verbose=True)
     for epoch in range(curr_epoch, train_args['epoch_num'] + 1):
@@ -110,6 +98,9 @@ def train(train_loader, net, criterion, optimizer, epoch, train_args):
     curr_iter = (epoch - 1) * len(train_loader)
     last_cycle = time.time()
     for i, data in enumerate(train_loader):
+        # print(i)
+        if i > train_args['max_images'] - 1:
+            break
         inputs, labels = data
         assert inputs.size()[2:] == labels.size()[1:]
         N = inputs.size(0)
@@ -145,13 +136,29 @@ def validate(val_loader, net, criterion, optimizer, epoch, train_args, restore, 
     inputs_all, gts_all, predictions_all = [], [], []
 
     for vi, data in enumerate(val_loader):
+        # print(vi)
+        # if vi > train_args['max_images'] - 1:
+        #     break
         inputs, gts = data
         N = inputs.size(0)
-        inputs = Variable(inputs, volatile=True).cuda()
-        gts = Variable(gts, volatile=True).cuda()
-
+        with torch.no_grad():
+            inputs = Variable(inputs).cuda()
+            gts = Variable(gts).cuda()
+        # print('************************')
+        # print('inputs ' , inputs)
+        # print('************************')
         outputs = net(inputs)
+        # print('outputs ', outputs.data.max(1))
+        # print((outputs))
+        # print(type(outputs))
+        # print(dir(outputs.data))
+        # print(type(outputs.data))
+        # print('all',outputs.data)
+        # print('0',outputs.data.max(0))
+        # print('1',outputs.data.max(1))
+        # print('************************')
         predictions = outputs.data.max(1)[1].squeeze_(1).squeeze_(0).cpu().numpy()
+        # print('predictions', predictions)
 
         val_loss.update(criterion(outputs, gts).data.item() / N, N)
 
@@ -165,6 +172,7 @@ def validate(val_loader, net, criterion, optimizer, epoch, train_args, restore, 
     acc, acc_cls, mean_iu, fwavacc = evaluate(predictions_all, gts_all, voc.num_classes)
 
     if mean_iu > train_args['best_record']['mean_iu']:
+    # if True:
         train_args['best_record']['val_loss'] = val_loss.avg
         train_args['best_record']['epoch'] = epoch
         train_args['best_record']['acc'] = acc
@@ -182,6 +190,10 @@ def validate(val_loader, net, criterion, optimizer, epoch, train_args, restore, 
             check_mkdir(to_save_dir)
 
         val_visual = []
+        # print(predictions_all)
+        # print('------------')
+        # print(gts_all)
+        # print('-------------')
         for idx, data in enumerate(zip(inputs_all, gts_all, predictions_all)):
             if data[0] is None:
                 continue
@@ -194,6 +206,8 @@ def validate(val_loader, net, criterion, optimizer, epoch, train_args, restore, 
                 gt_pil.save(os.path.join(to_save_dir, '%d_gt.png' % idx))
             val_visual.extend([visualize(input_pil.convert('RGB')), visualize(gt_pil.convert('RGB')),
                                visualize(predictions_pil.convert('RGB'))])
+            # print(val_visual)
+            # print('----------')
         val_visual = torch.stack(val_visual, 0)
         val_visual = vutils.make_grid(val_visual, nrow=3, padding=5)
         writer.add_image(snapshot_name, val_visual)

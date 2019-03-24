@@ -5,21 +5,10 @@ import numpy as np
 
 import os
 
-# here (https://github.com/pytorch/vision/tree/master/torchvision/models) to find the download link of pretrained models
 
 root = ''
-res101_path = os.path.join(root, 'ResNet', 'resnet101-5d3b4d8f.pth')
-res152_path = os.path.join(root, 'ResNet', 'resnet152-b121ed2d.pth')
-inception_v3_path = os.path.join(root, 'Inception', 'inception_v3_google-1a9a5a14.pth')
-vgg19_bn_path = os.path.join(root, 'VggNet', 'vgg19_bn-c79401a0.pth')
 vgg16_path = os.path.join(root, 'VggNet', 'vgg16-397923af.pth')
-dense201_path = os.path.join(root, 'DenseNet', 'densenet201-4c113574.pth')
 
-'''
-vgg16 trained using caffe
-visit this (https://github.com/jcjohnson/pytorch-vgg) to download the converted vgg16
-'''
-vgg16_caffe_path = os.path.join(root, 'VggNet', 'vgg16-caffe.pth')
 
 def get_upsampling_weight(in_channels, out_channels, kernel_size):
     factor = (kernel_size + 1) // 2
@@ -33,15 +22,14 @@ def get_upsampling_weight(in_channels, out_channels, kernel_size):
     weight[list(range(in_channels)), list(range(out_channels)), :, :] = filt
     return torch.from_numpy(weight).float()
 
-# This is implemented in full accordance with the original one (https://github.com/shelhamer/fcn.berkeleyvision.org)
 class FCN8s(nn.Module):
     def __init__(self, num_classes, pretrained=True, caffe=False):
         super(FCN8s, self).__init__()
         vgg = models.vgg16()
         if pretrained:
             vgg.load_state_dict(torch.load(vgg16_path))
-        features, classifier = list(vgg.features.children()), list(vgg.classifier.children())
 
+        features, classifier = list(vgg.features.children()), list(vgg.classifier.children())
         features[0].padding = (100, 100)
 
         for f in features:
@@ -74,9 +62,7 @@ class FCN8s(nn.Module):
         score_fr.weight.data.zero_()
         score_fr.bias.data.zero_()
         
-        self.score_fr = nn.Sequential(
-            fc6, nn.ReLU(inplace=True), nn.Dropout(), fc7, nn.ReLU(inplace=True), nn.Dropout(), score_fr
-        )
+        self.score_fr = nn.Sequential(fc6, nn.ReLU(inplace=True), nn.Dropout(), fc7, nn.ReLU(inplace=True), nn.Dropout(), score_fr)
 
         self.upscore2 = nn.ConvTranspose2d(num_classes, num_classes, kernel_size=4, stride=2, bias=False)
         self.upscore2.weight.data.copy_(get_upsampling_weight(num_classes, num_classes, 4))

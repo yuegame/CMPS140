@@ -5,14 +5,13 @@ import time
 
 import torchvision.transforms as standard_transforms
 import torchvision.utils as vutils
-from tensorboardX import SummaryWriter
 from torch import optim
 from torch.autograd import Variable
 from torch.backends import cudnn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 
-from transforms import *
+from helpers import *
 import voc
 import fcn8s
 
@@ -20,19 +19,17 @@ cudnn.benchmark = True
 
 ckpt_path = 'ckpt'
 exp_name = 'voc-fcn8s'
-writer = SummaryWriter(os.path.join(ckpt_path, 'exp', exp_name))
 
 args = {
-    'epoch_num': 10,
-    'lr': 1e-6,
+    'epoch_num': 5,
+    'lr': 1e-4,
     'weight_decay': 1e-2,
     'momentum': 0.95,
     'lr_patience': 100, 
-    'snapshot': '', 
     'print_freq': 10,
-    'val_save_to_img_file': True,
+    'val_save_to_img_file': False,
     'val_img_sample_rate': .2,  
-    'max_images': 8000
+    'max_images': 100
 }
 
 
@@ -66,9 +63,7 @@ def main(train_args):
     val_set = voc.VOC('val', transform=input_transform, target_transform=target_transform)
     val_loader = DataLoader(val_set, batch_size=1, num_workers=8, shuffle=False)
 
-    print(os.path.abspath(train_set.imgs[0][0]))
-
-    criterion = CrossEntropyLoss2d(size_average=False, ignore_index=voc.ignore_label).cuda()
+    criterion = CrossEntropyLoss2d(ignore_index=voc.ignore_label).cuda()
 
     optimizer = optim.Adam([
         {'params': [param for name, param in net.named_parameters() if name[-4:] == 'bias'],
@@ -76,11 +71,6 @@ def main(train_args):
         {'params': [param for name, param in net.named_parameters() if name[-4:] != 'bias'],
          'lr': train_args['lr'], 'weight_decay': train_args['weight_decay']}
     ], betas=(train_args['momentum'], 0.999))
-
-    if len(train_args['snapshot']) > 0:
-        optimizer.load_state_dict(torch.load(os.path.join(ckpt_path, exp_name, 'opt_' + train_args['snapshot'])))
-        optimizer.param_groups[0]['lr'] = 2 * train_args['lr']
-        optimizer.param_groups[1]['lr'] = train_args['lr']
 
     check_mkdir(ckpt_path)
     check_mkdir(os.path.join(ckpt_path, exp_name))
@@ -112,8 +102,6 @@ def train(train_loader, net, criterion, optimizer, epoch, train_args):
         assert outputs.size()[2:] == labels.size()[1:]
         assert outputs.size()[1] == voc.num_classes
 
-        # print(i/len(i))
-
         loss = criterion(outputs, labels) / N
         loss.backward()
         optimizer.step()
@@ -121,7 +109,6 @@ def train(train_loader, net, criterion, optimizer, epoch, train_args):
         train_loss.update(loss.data.item(), N)
 
         curr_iter += 1
-        writer.add_scalar('train_loss', train_loss.avg, curr_iter)
 
         if (i + 1) % train_args['print_freq'] == 0:
             print('[epoch %d], [iter %d / %d], [train loss %.5f]' % (
@@ -137,28 +124,15 @@ def validate(val_loader, net, criterion, optimizer, epoch, train_args, restore, 
 
     for vi, data in enumerate(val_loader):
         # print(vi)
-        # if vi > train_args['max_images'] - 1:
-        #     break
+        if vi > train_args['max_images'] - 1:
+            break
         inputs, gts = data
         N = inputs.size(0)
         with torch.no_grad():
             inputs = Variable(inputs).cuda()
             gts = Variable(gts).cuda()
-        # print('************************')
-        # print('inputs ' , inputs)
-        # print('************************')
         outputs = net(inputs)
-        # print('outputs ', outputs.data.max(1))
-        # print((outputs))
-        # print(type(outputs))
-        # print(dir(outputs.data))
-        # print(type(outputs.data))
-        # print('all',outputs.data)
-        # print('0',outputs.data.max(0))
-        # print('1',outputs.data.max(1))
-        # print('************************')
         predictions = outputs.data.max(1)[1].squeeze_(1).squeeze_(0).cpu().numpy()
-        # print('predictions', predictions)
 
         val_loss.update(criterion(outputs, gts).data.item() / N, N)
 
@@ -179,21 +153,12 @@ def validate(val_loader, net, criterion, optimizer, epoch, train_args, restore, 
         train_args['best_record']['acc_cls'] = acc_cls
         train_args['best_record']['mean_iu'] = mean_iu
         train_args['best_record']['fwavacc'] = fwavacc
-        snapshot_name = 'epoch_%d_loss_%.5f_acc_%.5f_acc-cls_%.5f_mean-iu_%.5f_fwavacc_%.5f_lr_%.10f' % (
-            epoch, val_loss.avg, acc, acc_cls, mean_iu, fwavacc, optimizer.param_groups[1]['lr']
-        )
-        torch.save(net.state_dict(), os.path.join(ckpt_path, exp_name, snapshot_name + '.pth'))
-        torch.save(optimizer.state_dict(), os.path.join(ckpt_path, exp_name, 'opt_' + snapshot_name + '.pth'))
 
         if train_args['val_save_to_img_file']:
             to_save_dir = os.path.join(ckpt_path, exp_name, str(epoch))
             check_mkdir(to_save_dir)
 
         val_visual = []
-        # print(predictions_all)
-        # print('------------')
-        # print(gts_all)
-        # print('-------------')
         for idx, data in enumerate(zip(inputs_all, gts_all, predictions_all)):
             if data[0] is None:
                 continue
@@ -206,11 +171,8 @@ def validate(val_loader, net, criterion, optimizer, epoch, train_args, restore, 
                 gt_pil.save(os.path.join(to_save_dir, '%d_gt.png' % idx))
             val_visual.extend([visualize(input_pil.convert('RGB')), visualize(gt_pil.convert('RGB')),
                                visualize(predictions_pil.convert('RGB'))])
-            # print(val_visual)
-            # print('----------')
         val_visual = torch.stack(val_visual, 0)
         val_visual = vutils.make_grid(val_visual, nrow=3, padding=5)
-        writer.add_image(snapshot_name, val_visual)
 
     print('--------------------------------------------------------------------')
     print('[epoch %d], [val loss %.5f], [acc %.5f], [acc_cls %.5f], [mean_iu %.5f], [fwavacc %.5f]' % (
@@ -221,14 +183,6 @@ def validate(val_loader, net, criterion, optimizer, epoch, train_args, restore, 
         train_args['best_record']['mean_iu'], train_args['best_record']['fwavacc'], train_args['best_record']['epoch']))
 
     print('--------------------------------------------------------------------')
-
-    writer.add_scalar('val_loss', val_loss.avg, epoch)
-    writer.add_scalar('acc', acc, epoch)
-    writer.add_scalar('acc_cls', acc_cls, epoch)
-    writer.add_scalar('mean_iu', mean_iu, epoch)
-    writer.add_scalar('fwavacc', fwavacc, epoch)
-    writer.add_scalar('lr', optimizer.param_groups[1]['lr'], epoch)
-
     net.train()
     return val_loss.avg
 
